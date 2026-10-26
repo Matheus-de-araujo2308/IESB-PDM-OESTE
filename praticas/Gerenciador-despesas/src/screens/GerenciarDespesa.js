@@ -1,170 +1,285 @@
-import { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Alert, Platform } from 'react-native';
+import React, { useState, useLayoutEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  Alert,
+  Modal,
+  FlatList,
+  KeyboardAvoidingView,
+  ScrollView,
+  Platform,
+} from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import IconButton from '../components/IconButton';
+import { Ionicons } from '@expo/vector-icons';
+import { useExpenses } from '../store/expenses-context';
+import { Colors } from '../constants/theme';
 
-const CATEGORIAS = ['Alimentação', 'Transporte', 'Lazer', 'Contas'];
+const CATEGORIES = ['Alimentação', 'Transporte', 'Lazer', 'Contas', 'Outros'];
 
-const formatarDataBR = (dataObj) => {
-  const dia = String(dataObj.getDate()).padStart(2, '0');
-  const mes = String(dataObj.getMonth() + 1).padStart(2, '0');
-  const ano = dataObj.getFullYear();
-  return `${dia}/${mes}/${ano}`;
-};
+export default function GerenciarDespesa({ route, navigation }) {
+  const expenseId = route.params?.expenseId;
+  const isEditing = !!expenseId;
+  const { expenses, addExpense, updateExpense, deleteExpense, themeMode } = useExpenses();
 
-export default function GerenciarDespesa({ route, navigation, onSalvar, onDeletar }) {
-  const despesaParaEditar = route?.params?.despesa;
-  const isEditing = !!despesaParaEditar;
+  const theme = Colors[themeMode || 'light'];
 
-  const [descricao, setDescricao] = useState(despesaParaEditar ? despesaParaEditar.descricao : '');
-  const [valor, setValor] = useState(
-    despesaParaEditar ? despesaParaEditar.valor.toString().replace('.', ',') : ''
-  );
-  const [categoria, setCategoria] = useState(despesaParaEditar ? despesaParaEditar.categoria : '');
-  const [data, setData] = useState(
-    despesaParaEditar ? new Date(despesaParaEditar.data + 'T00:00:00') : new Date()
-  );
+  const selectedExpense = isEditing ? expenses.find((e) => e.id === expenseId) : null;
+
+  const [form, setForm] = useState({
+    description: selectedExpense ? selectedExpense.description : '',
+    amount: selectedExpense ? selectedExpense.amount.toString() : '',
+    date: selectedExpense ? new Date(selectedExpense.date) : new Date(),
+    category: selectedExpense ? selectedExpense.category : '',
+  });
+
+  const [errors, setErrors] = useState({});
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
-  const handleValorChange = (texto) => {
-    if (/^\d*[,.]?\d{0,2}$/.test(texto)) {
-      setValor(texto);
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: isEditing ? 'Editar despesa' : 'Nova despesa',
+    });
+  }, [navigation, isEditing]);
+
+  function handleChange(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors((prev) => ({ ...prev, [field]: null }));
     }
-  };
+  }
 
-  const handleSubmeter = () => {
-    if (!descricao.trim() || !valor || !categoria) {
-      Alert.alert('Erro', 'Por favor, preencha a descrição, valor e selecione uma categoria.');
+  function handleAmountChange(text) {
+    const formatted = text.replace(',', '.');
+    if (/^\d*\.?\d{0,2}$/.test(formatted) || formatted === '') {
+      handleChange('amount', formatted);
+    }
+  }
+
+  function validate(values) {
+    const newErrors = {};
+    if (!values.description || values.description.trim().length < 3) {
+      newErrors.description = 'A descrição deve ter no mínimo 3 caracteres.';
+    }
+    const numAmount = parseFloat(values.amount);
+    if (!values.amount || isNaN(numAmount) || numAmount <= 0) {
+      newErrors.amount = 'Informe um valor maior que zero.';
+    }
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (!values.date || values.date > today) {
+      newErrors.date = 'A data não pode ser futura.';
+    }
+    if (!values.category) {
+      newErrors.category = 'Selecione uma categoria.';
+    }
+    return newErrors;
+  }
+
+  function handleSave() {
+    const validationErrors = validate(form);
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
       return;
     }
 
-    const valorFormatado = parseFloat(valor.replace(',', '.'));
-
-    if (isNaN(valorFormatado)) {
-      Alert.alert('Erro', 'Por favor, insira um valor válido.');
-      return;
-    }
-
-    const dadosDespesa = {
-      id: isEditing ? despesaParaEditar.id : Math.random().toString(),
-      descricao,
-      valor: valorFormatado,
-      categoria,
-      data: data.toISOString().split('T')[0],
+    const expenseData = {
+      description: form.description.trim(),
+      amount: parseFloat(form.amount),
+      date: form.date.toISOString().split('T')[0],
+      category: form.category,
     };
 
-    if (onSalvar) onSalvar(dadosDespesa);
-    navigation.goBack();
-  };
-
-  const handleDeletar = () => {
-    if (onDeletar && despesaParaEditar) {
-      onDeletar(despesaParaEditar.id);
+    if (isEditing) {
+      updateExpense(expenseId, expenseData);
+    } else {
+      addExpense(expenseData);
     }
     navigation.goBack();
-  };
+  }
+
+  function handleDeleteConfirm() {
+    Alert.alert('Excluir despesa', 'Tem certeza que deseja excluir esta despesa?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: () => {
+          deleteExpense(expenseId);
+          navigation.goBack();
+        },
+      },
+    ]);
+  }
 
   return (
-    <View style={styles.form}>
-      <Text style={styles.label}>Descrição:</Text>
-      <TextInput
-        style={styles.input}
-        value={descricao}
-        onChangeText={setDescricao}
-        placeholder="Ex: Mercado"
-      />
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: theme.background }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.formGroup}>
+          <Text style={[styles.label, { color: theme.textPrimary }]}>Descrição</Text>
+          <TextInput
+            style={[
+              styles.input,
+              { backgroundColor: theme.surface, color: theme.textPrimary, borderColor: theme.border },
+              errors.description && styles.inputError,
+            ]}
+            value={form.description}
+            onChangeText={(val) => handleChange('description', val)}
+            placeholder="Ex: Almoço"
+            placeholderTextColor={theme.textSecondary}
+          />
+          {errors.description && <Text style={styles.errorText}>{errors.description}</Text>}
+        </View>
 
-      <Text style={styles.label}>Valor (R$):</Text>
-      <TextInput
-        style={styles.input}
-        keyboardType="decimal-pad"
-        value={valor}
-        onChangeText={handleValorChange}
-        placeholder="0,00"
-      />
+        <View style={styles.formGroup}>
+          <Text style={[styles.label, { color: theme.textPrimary }]}>Valor (R$)</Text>
+          <TextInput
+            style={[
+              styles.input,
+              { backgroundColor: theme.surface, color: theme.textPrimary, borderColor: theme.border },
+              errors.amount && styles.inputError,
+            ]}
+            keyboardType="decimal-pad"
+            value={form.amount}
+            onChangeText={handleAmountChange}
+            placeholder="0.00"
+            placeholderTextColor={theme.textSecondary}
+          />
+          {errors.amount && <Text style={styles.errorText}>{errors.amount}</Text>}
+        </View>
 
-      <Text style={styles.label}>Categoria:</Text>
-      <View style={styles.categoriasGroup}>
-        {CATEGORIAS.map((cat) => (
+        <View style={styles.formGroup}>
+          <Text style={[styles.label, { color: theme.textPrimary }]}>Data</Text>
           <Pressable
-            key={cat}
-            style={[styles.catOption, categoria === cat && styles.catOptionAtiva]}
-            onPress={() => setCategoria(cat)}
+            style={[
+              styles.selector,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+              errors.date && styles.inputError,
+            ]}
+            onPress={() => setShowDatePicker(true)}
           >
-            <Text style={categoria === cat ? styles.catTxtAtivo : styles.catTxt}>{cat}</Text>
+            <Text style={{ color: theme.textPrimary }}>
+              {form.date ? form.date.toLocaleDateString('pt-BR') : 'Selecione a data'}
+            </Text>
+            <Ionicons name="calendar-outline" size={20} color={theme.textSecondary} />
           </Pressable>
-        ))}
-      </View>
-
-      <Text style={styles.label}>Data da Despesa:</Text>
-      
-      {/* Se for Web, exibe input tipo 'date' nativo do browser */}
-      {Platform.OS === 'web' ? (
-        <input
-          type="date"
-          value={data.toISOString().split('T')[0]}
-          onChange={(e) => {
-            if (e.target.value) {
-              setData(new Date(e.target.value + 'T00:00:00'));
-            }
-          }}
-          style={{
-            padding: '10px',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            marginBottom: '20px',
-            fontSize: '15px',
-          }}
-        />
-      ) : (
-        /* Se for Mobile (iOS/Android) */
-        <>
-          <Pressable style={styles.btnData} onPress={() => setShowDatePicker(true)}>
-            <Text style={styles.txtData}>{formatarDataBR(data)}</Text>
-          </Pressable>
-
+          {errors.date && <Text style={styles.errorText}>{errors.date}</Text>}
           {showDatePicker && (
             <DateTimePicker
-              value={data}
+              value={form.date || new Date()}
               mode="date"
               display="default"
               onChange={(event, selectedDate) => {
-                setShowDatePicker(false);
-                if (selectedDate) setData(selectedDate);
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) handleChange('date', selectedDate);
               }}
             />
           )}
-        </>
-      )}
-
-      <View style={styles.botoesContainer}>
-        <Pressable style={styles.btnSalvar} onPress={handleSubmeter}>
-          <Text style={styles.btnSalvarTexto}>{isEditing ? 'Atualizar' : 'Salvar'}</Text>
-        </Pressable>
-      </View>
-
-      {isEditing && (
-        <View style={styles.deleteContainer}>
-          <IconButton icon="trash" size={32} color="#d9534f" onPress={handleDeletar} />
         </View>
-      )}
-    </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.label, { color: theme.textPrimary }]}>Categoria</Text>
+          <Pressable
+            style={[
+              styles.selector,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+              errors.category && styles.inputError,
+            ]}
+            onPress={() => setShowCategoryModal(true)}
+          >
+            <Text style={{ color: form.category ? theme.textPrimary : theme.textSecondary }}>
+              {form.category || 'Selecione uma categoria'}
+            </Text>
+            <Ionicons name="chevron-down-outline" size={20} color={theme.textSecondary} />
+          </Pressable>
+          {errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
+        </View>
+
+        <View style={styles.buttonsContainer}>
+          <Pressable
+            style={[styles.button, { backgroundColor: theme.border }]}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={[styles.btnText, { color: theme.textPrimary }]}>Cancelar</Text>
+          </Pressable>
+          <Pressable style={[styles.button, { backgroundColor: theme.primary }]} onPress={handleSave}>
+            <Text style={[styles.btnText, { color: '#FFF' }]}>Salvar</Text>
+          </Pressable>
+        </View>
+
+        {isEditing && (
+          <View style={styles.deleteContainer}>
+            <Pressable style={styles.deleteButton} onPress={handleDeleteConfirm}>
+              <Ionicons name="trash-outline" size={24} color={theme.danger} />
+              <Text style={[styles.deleteText, { color: theme.danger }]}>Excluir Despesa</Text>
+            </Pressable>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Modal de Categorias */}
+      <Modal visible={showCategoryModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+            <Text style={[styles.modalTitle, { color: theme.textPrimary }]}>Escolha a Categoria</Text>
+            <FlatList
+              data={CATEGORIES}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.categoryItem}
+                  onPress={() => {
+                    handleChange('category', item);
+                    setShowCategoryModal(false);
+                  }}
+                >
+                  <Text style={[styles.categoryText, { color: theme.textPrimary }]}>{item}</Text>
+                </Pressable>
+              )}
+            />
+            <Pressable
+              style={[styles.button, { backgroundColor: theme.border, marginTop: 12 }]}
+              onPress={() => setShowCategoryModal(false)}
+            >
+              <Text style={[styles.btnText, { color: theme.textPrimary }]}>Fechar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  form: { padding: 20 },
-  label: { fontSize: 14, fontWeight: 'bold', marginVertical: 6 },
-  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 4, padding: 8, marginBottom: 12 },
-  categoriasGroup: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
-  catOption: { padding: 8, borderWidth: 1, borderColor: '#ccc', borderRadius: 6, marginRight: 6, marginBottom: 6 },
-  catOptionAtiva: { backgroundColor: '#2a6f97', borderColor: '#2a6f97' },
-  catTxt: { color: '#333' },
-  catTxtAtivo: { color: '#fff', fontWeight: 'bold' },
-  btnData: { padding: 12, backgroundColor: '#e9ecef', borderRadius: 4, alignItems: 'center', marginBottom: 20 },
-  txtData: { fontSize: 15, fontWeight: '600', color: '#2a6f97' },
-  botoesContainer: { marginTop: 10 },
-  btnSalvar: { backgroundColor: '#2b9348', padding: 12, borderRadius: 6, alignItems: 'center' },
-  btnSalvarTexto: { color: '#fff', fontWeight: 'bold' },
-  deleteContainer: { marginTop: 24, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#ccc', paddingTop: 12 },
+  container: { padding: 16 },
+  formGroup: { marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
+  input: { borderWidth: 1, borderRadius: 8, padding: 12, fontSize: 16 },
+  inputError: { borderColor: '#EF4444' },
+  errorText: { color: '#EF4444', fontSize: 12, marginTop: 4 },
+  selector: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  buttonsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, gap: 12 },
+  button: { flex: 1, padding: 14, borderRadius: 8, alignItems: 'center' },
+  btnText: { fontWeight: 'bold', fontSize: 16 },
+  deleteContainer: { marginTop: 32, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 16 },
+  deleteButton: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  deleteText: { fontWeight: 'bold', fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, maxHeight: '50%' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
+  categoryItem: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  categoryText: { fontSize: 16, textAlign: 'center' },
 });
